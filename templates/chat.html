@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>聊天 - 端到端加密聊天系统</title>
+  <!-- 引入 Socket.IO 客户端 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+  <style>
+    /* 通用重置与盒模型 */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f4f4f9;
+      color: #333;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    /* 头部 */
+    .header {
+      background: #5563DE;
+      color: #fff;
+      padding: 15px;
+      text-align: center;
+    }
+    /* 整体容器 */
+    .container {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    /* 左侧在线用户列表 */
+    .sidebar {
+      width: 200px;
+      background: #f8f9fa;
+      border-right: 1px solid #ddd;
+      padding: 15px;
+      overflow-y: auto;
+    }
+    .sidebar h3 {
+      margin-bottom: 10px;
+      font-size: 18px;
+    }
+    .sidebar ul {
+      list-style: none;
+    }
+    .sidebar li {
+      margin-bottom: 8px;
+      padding: 5px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .sidebar li:hover {
+      background: #e2e6ea;
+    }
+    /* 右侧聊天内容 */
+    .content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 15px;
+      overflow-y: auto;
+    }
+    /* 消息展示区 */
+    .messages {
+      flex: 1;
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      margin-bottom: 15px;
+      overflow-y: auto;
+    }
+    .messages h3 {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+    .messages ul {
+      list-style: none;
+    }
+    .messages li {
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 5px;
+      background: #f1f1f1;
+      position: relative;
+      word-wrap: break-word;
+    }
+    .messages li.my-message {
+      background: #d1e7dd;
+      text-align: right;
+    }
+    .messages li button {
+      background: #ff4d4f;
+      color: #fff;
+      border: none;
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      position: absolute;
+      top: 8px;
+      right: 8px;
+    }
+    /* 表单区域 */
+    .form-section {
+      background: #fff;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .form-section h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+    .form-section form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .form-section input[type="text"],
+    .form-section textarea {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .form-section textarea {
+      resize: vertical;
+    }
+    .form-section button {
+      background: #5563DE;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background-color 0.3s ease;
+    }
+    .form-section button:hover {
+      background: #3b46b1;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>欢迎, {{ username }}</h2>
+  </div>
+  <div class="container">
+    <!-- 在线用户列表 -->
+    <div class="sidebar">
+      <h3>在线用户</h3>
+      <ul id="userList"></ul>
+    </div>
+    <!-- 聊天内容区域 -->
+    <div class="content">
+      <div class="messages">
+        <h3>消息</h3>
+        <ul id="messages"></ul>
+      </div>
+      <!-- 发送消息表单 -->
+      <div class="form-section">
+        <h3>发送消息</h3>
+        <form id="messageForm">
+          <input type="text" id="recipient" placeholder="发送给 (用户名)" required>
+          <textarea id="messageInput" rows="2" placeholder="输入消息（加密前）"></textarea>
+          <button type="submit">发送消息</button>
+        </form>
+      </div>
+      <!-- 密钥交换表单 -->
+      <div class="form-section">
+        <h3>密钥交换</h3>
+        <form id="keyExchangeForm">
+          <input type="text" id="exchangeRecipient" placeholder="对方用户名" required>
+          <button type="submit">发起密钥交换</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 全局变量
+    const username = "{{ username }}";
+    const socket = io();
+
+    // 用于保存本客户端的密钥对与共享密钥
+    let ecdhKeyPair = null;        // 用于 ECDH 密钥交换
+    let sharedKeys = {};           // 格式：other_username -> AES CryptoKey
+    let signKeyPair = null;        // 用于数字签名（ECDSA）
+    let publicSignKey = null;      // 签名公钥（导出为 base64 后发送给服务器）
+    // 保存各在线用户的签名公钥，用于数字认证
+    let userPublicKeys = {};
+
+    // 辅助函数：ArrayBuffer 转 base64
+    function arrayBufferToBase64(buffer) {
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return window.btoa(binary);
+    }
+
+    // 辅助函数：base64 转 ArrayBuffer
+    function base64ToArrayBuffer(base64) {
+      const binary_string = window.atob(base64);
+      const len = binary_string.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary_string.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+
+    // 生成 ECDH 密钥对（用于密钥交换，采用 P-256 曲线）
+    async function generateECDHKeyPair() {
+      ecdhKeyPair = await window.crypto.subtle.generateKey(
+        {
+          name: "ECDH",
+          namedCurve: "P-256"
+        },
+        true,
+        ["deriveKey"]
+      );
+    }
+
+    // 生成签名密钥对（ECDSA，用于数字签名，采用 P-256 曲线）
+    async function generateSignKeyPair() {
+      signKeyPair = await window.crypto.subtle.generateKey(
+        {
+          name: "ECDSA",
+          namedCurve: "P-256"
+        },
+        true,
+        ["sign", "verify"]
+      );
+      const exported = await window.crypto.subtle.exportKey("spki", signKeyPair.publicKey);
+      publicSignKey = arrayBufferToBase64(exported);
+    }
+
+    // 初始化密钥对并向服务器注册
+    async function initKeys() {
+      await generateECDHKeyPair();
+      await generateSignKeyPair();
+      // 注册时把用户名和签名公钥发送给服务器
+      socket.emit('register', {username: username, public_key: publicSignKey});
+    }
+    initKeys();
+
+    // 更新在线用户列表，同时保存各用户的签名公钥
+    socket.on('user_list', function(userList) {
+      const ul = document.getElementById('userList');
+      ul.innerHTML = '';
+      userList.forEach(user => {
+        userPublicKeys[user.username] = user.public_key;
+        if (user.username !== username) {
+          const li = document.createElement('li');
+          li.textContent = user.username;
+          ul.appendChild(li);
+        }
+      });
+    });
+
+    // 处理接收到的密钥交换请求
+    socket.on('key_exchange', async function(data) {
+      const sender = data.sender;
+      const senderECDHPubBase64 = data.ecdh_public;
+      // 导入对方的 ECDH 公钥
+      const senderECDHPubBuffer = base64ToArrayBuffer(senderECDHPubBase64);
+      const senderECDHPubKey = await window.crypto.subtle.importKey(
+        "raw",
+        senderECDHPubBuffer,
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        []
+      );
+      // 计算共享密钥，并保存到 sharedKeys 中
+      const sharedKey = await window.crypto.subtle.deriveKey(
+        {
+          name: "ECDH",
+          public: senderECDHPubKey
+        },
+        ecdhKeyPair.privateKey,
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      sharedKeys[sender] = sharedKey;
+      // 回复自己的 ECDH 公钥给对方
+      const exported = await window.crypto.subtle.exportKey("raw", ecdhKeyPair.publicKey);
+      const myECDHPubBase64 = arrayBufferToBase64(exported);
+      socket.emit('key_exchange_response', {sender: username, recipient: sender, ecdh_public: myECDHPubBase64});
+      console.log("密钥交换完成，与 " + sender);
+    });
+
+    // 处理接收到的密钥交换响应
+    socket.on('key_exchange_response', async function(data) {
+      const sender = data.sender;
+      const senderECDHPubBase64 = data.ecdh_public;
+      const senderECDHPubBuffer = base64ToArrayBuffer(senderECDHPubBase64);
+      const senderECDHPubKey = await window.crypto.subtle.importKey(
+        "raw",
+        senderECDHPubBuffer,
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        []
+      );
+      const sharedKey = await window.crypto.subtle.deriveKey(
+        {
+          name: "ECDH",
+          public: senderECDHPubKey
+        },
+        ecdhKeyPair.privateKey,
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      sharedKeys[sender] = sharedKey;
+      console.log("密钥交换完成，与 " + sender);
+    });
+
+    // 发起密钥交换
+    document.getElementById('keyExchangeForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const exchangeRecipient = document.getElementById('exchangeRecipient').value;
+      const exported = await window.crypto.subtle.exportKey("raw", ecdhKeyPair.publicKey);
+      const myECDHPubBase64 = arrayBufferToBase64(exported);
+      socket.emit('key_exchange', {sender: username, recipient: exchangeRecipient, ecdh_public: myECDHPubBase64});
+    });
+
+    // 发送消息前：使用共享 AES 密钥对消息进行 AES-GCM 加密，并用 ECDSA 签名
+    document.getElementById('messageForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const recipient = document.getElementById('recipient').value;
+      const plaintext = document.getElementById('messageInput').value;
+      if (!sharedKeys[recipient]) {
+        alert("尚未与 " + recipient + " 完成密钥交换！");
+        return;
+      }
+      const aesKey = sharedKeys[recipient];
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const encoder = new TextEncoder();
+      const data = encoder.encode(plaintext);
+      const ciphertextBuffer = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        aesKey,
+        data
+      );
+      // 将 iv 与密文合并，便于传输
+      const combined = new Uint8Array(iv.byteLength + ciphertextBuffer.byteLength);
+      combined.set(iv, 0);
+      combined.set(new Uint8Array(ciphertextBuffer), iv.byteLength);
+      const ciphertextBase64 = arrayBufferToBase64(combined.buffer);
+      // 对密文进行签名（签名的是密文字符串）
+      const signatureBuffer = await window.crypto.subtle.sign(
+        { name: "ECDSA", hash: { name: "SHA-256" } },
+        signKeyPair.privateKey,
+        encoder.encode(ciphertextBase64)
+      );
+      const signatureBase64 = arrayBufferToBase64(signatureBuffer);
+      // 生成一个消息 ID
+      const messageId = Date.now().toString() + Math.random().toString(36).substring(2);
+      socket.emit('send_message', {
+        sender: username,
+        recipient: recipient,
+        ciphertext: ciphertextBase64,
+        signature: signatureBase64,
+        message_id: messageId
+      });
+      document.getElementById('messageInput').value = '';
+    });
+
+    // 接收消息：先验证数字签名，再尝试用共享密钥解密
+    socket.on('receive_message', async function(msg) {
+      const li = document.createElement('li');
+      li.setAttribute('data-message-id', msg.id);
+      if (msg.recalled) {
+        li.textContent = "消息已撤回";
+      } else {
+        let displayText = "";
+        if (msg.sender === username) {
+          li.classList.add('my-message');
+          displayText += "我对 " + msg.recipient + " 说: ";
+        } else {
+          displayText += msg.sender + " 对我说: ";
+        }
+        // 数字签名验证
+        let signatureNote = "";
+        if (userPublicKeys[msg.sender]) {
+          try {
+            const senderPubKeyBase64 = userPublicKeys[msg.sender];
+            const senderPubKeyBuffer = base64ToArrayBuffer(senderPubKeyBase64);
+            const senderPubKey = await window.crypto.subtle.importKey(
+              "spki",
+              senderPubKeyBuffer,
+              { name: "ECDSA", namedCurve: "P-256" },
+              true,
+              ["verify"]
+            );
+            const encoder = new TextEncoder();
+            const isValid = await window.crypto.subtle.verify(
+              { name: "ECDSA", hash: { name: "SHA-256" } },
+              senderPubKey,
+              base64ToArrayBuffer(msg.signature),
+              encoder.encode(msg.ciphertext)
+            );
+            signatureNote = isValid ? " [签名验证成功]" : " [签名验证失败]";
+          } catch (e) {
+            signatureNote = " [签名验证异常]";
+          }
+        }
+        // 如果与对方已完成密钥交换，则尝试解密，否则提示无法解密
+        if (sharedKeys[msg.sender] || sharedKeys[msg.recipient]) {
+          const key = sharedKeys[msg.sender] ? sharedKeys[msg.sender] : sharedKeys[msg.recipient];
+          try {
+            const combinedBuffer = base64ToArrayBuffer(msg.ciphertext);
+            const iv = combinedBuffer.slice(0, 12);
+            const cipherData = combinedBuffer.slice(12);
+            const decryptedBuffer = await window.crypto.subtle.decrypt(
+              { name: "AES-GCM", iv: new Uint8Array(iv) },
+              key,
+              cipherData
+            );
+            const decoder = new TextDecoder();
+            const plaintext = decoder.decode(decryptedBuffer);
+            displayText += plaintext + signatureNote;
+          } catch (e) {
+            displayText += "[解密失败]" + signatureNote;
+          }
+        } else {
+          displayText += "[未完成密钥交换，无法解密]" + signatureNote;
+        }
+        li.textContent = displayText;
+      }
+      // 如果我是发送者且消息未撤回，添加“撤回”按钮
+      if (msg.sender === username && !msg.recalled) {
+        const recallBtn = document.createElement('button');
+        recallBtn.textContent = "撤回";
+        recallBtn.onclick = function() {
+          socket.emit('recall_message', {sender: username, message_id: msg.id});
+        };
+        li.appendChild(recallBtn);
+      }
+      document.getElementById('messages').appendChild(li);
+    });
+
+    // 处理消息撤回通知
+    socket.on('message_recalled', function(data) {
+      const messageId = data.message_id;
+      const messagesList = document.getElementById('messages');
+      // 获取所有消息项
+      const messageItems = messagesList.getElementsByTagName('li');
+      for (let li of messageItems) {
+        if (li.getAttribute('data-message-id') === messageId) {
+          // 更新该消息的显示内容为“消息已撤回”
+          li.textContent = "消息已撤回";
+          break;
+        }
+      }
+    });
+    
+  </script>
+</body>
+</html>

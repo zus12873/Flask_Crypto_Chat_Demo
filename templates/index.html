@@ -1,59 +1,88 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>简单聊天室</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+  <meta charset="UTF-8">
+  <title>登录 - 端到端加密聊天系统</title>
+  <style>
+    /* 页面基础样式 */
+    body {
+      background: linear-gradient(135deg, #74ABE2, #5563DE);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+    }
+    /* 登录框样式 */
+    .login-container {
+      background-color: #fff;
+      padding: 2rem 2.5rem;
+      border-radius: 10px;
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+      width: 320px;
+      text-align: center;
+    }
+    .login-container h2 {
+      margin-bottom: 1.5rem;
+      color: #5563DE;
+    }
+    /* 表单样式 */
+    form {
+      display: flex;
+      flex-direction: column;
+    }
+    label {
+      text-align: left;
+      margin-bottom: 0.5rem;
+      font-weight: bold;
+    }
+    input[type="text"] {
+      padding: 0.75rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      margin-bottom: 1.25rem;
+      transition: border-color 0.3s ease;
+    }
+    input[type="text"]:focus {
+      border-color: #5563DE;
+      outline: none;
+    }
+    button[type="submit"] {
+      padding: 0.75rem;
+      font-size: 1rem;
+      background-color: #5563DE;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    button[type="submit"]:hover {
+      background-color: #3b46b1;
+    }
+  </style>
 </head>
 <body>
-    <div class="chat-container">
-        <div class="messages" id="messages">
-            {% for message in messages %}
-            <div class="message">
-                <span class="timestamp">{{ message.timestamp }}</span>
-                <span class="text">{{ message.text }}</span>
-            </div>
-            {% endfor %}
-        </div>
-        <div class="input-area">
-            <form id="message-form">
-                <input type="text" id="message-input" placeholder="输入消息...">
-                <button type="submit">发送</button>
-            </form>
-        </div>
-    </div>
+  <div class="login-container">
+    <h2>登录</h2>
+    <form id="loginForm">
+      <label for="username">用户名:</label>
+      <input type="text" id="username" name="username" required>
+      <button type="submit">登录</button>
+    </form>
+  </div>
 
-    <script>
-        const socket = io();
-        const form = document.getElementById('message-form');
-        const input = document.getElementById('message-input');
-        const messages = document.getElementById('messages');
-
-        // 添加渲染消息的函数
-        function renderMessage(message) {
-            return `
-                <div class="message">
-                    <span class="timestamp">${message.timestamp}</span>
-                    <span class="text">${message.text}</span>
-                </div>
-            `;
-        }
-
-        // 监听新消息事件
-        socket.on('new_message', (message) => {
-            messages.insertAdjacentHTML('beforeend', renderMessage(message));
-            messages.scrollTop = messages.scrollHeight;
-        });
-
-        form.onsubmit = (e) => {
-            e.preventDefault();
-            const message = input.value;
-            if (!message) return;
-
-            // 发送消息到服务器
-            socket.emit('send_message', { message: message });
-            input.value = '';
-        };
-    </script>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      var username = document.getElementById('username').value;
+      // 简单地将用户名以 GET 参数传递到聊天页面
+      window.location.href = '/chat?username=' + encodeURIComponent(username);
+    });
+  </script>
 </body>
 </html>
