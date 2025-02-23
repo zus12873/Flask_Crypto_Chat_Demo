@@ -424,13 +424,18 @@
             const combinedBuffer = base64ToArrayBuffer(msg.ciphertext);
             const iv = combinedBuffer.slice(0, 12);
             const cipherData = combinedBuffer.slice(12);
+            const startTime = performance.now();  
             const decryptedBuffer = await window.crypto.subtle.decrypt(
               { name: "AES-GCM", iv: new Uint8Array(iv) },
               key,
               cipherData
             );
             const decoder = new TextDecoder();
+
             const plaintext = decoder.decode(decryptedBuffer);
+            const endTime = performance.now();
+            const duration = endTime - startTime;
+            console.log(`解密耗时: ${duration} 毫秒`);
             displayText += plaintext + signatureNote;
           } catch (e) {
             displayText += "[解密失败]" + signatureNote;
